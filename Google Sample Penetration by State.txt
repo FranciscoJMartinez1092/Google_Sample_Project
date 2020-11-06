@@ -1,0 +1,110 @@
+WITH census AS(
+  SELECT 
+  zipcode,
+  population
+  FROM `bigquery-public-data.census_bureau_usa.population_by_zip_2010` census
+  WHERE minimum_age IS NULL
+  AND maximum_age IS NULL
+  AND gender IS NULL
+),
+
+zip AS (
+SELECT
+state_name,
+zip_code
+FROM `bigquery-public-data.geo_us_boundaries.zip_codes`
+),
+
+state_population AS
+(
+  SELECT   
+  SUM(census.population) AS total_population,
+  zip.state_name AS state_name
+  FROM census
+  LEFT JOIN zip
+  ON census.zipcode = zip.zip_code
+  GROUP BY zip.state_name
+  ORDER BY zip.state_name asc
+  LIMIT 1000
+),
+
+sessions AS
+(
+  SELECT
+  date,
+  SUM(totals.visits) as visits,
+  SUM(totals.transactions) as transactions, 
+  CASE WHEN SUM(totals.visits)>0
+    THEN SUM(totals.transactions)/SUM(totals.visits)
+    ELSE 0
+    END as conversion_rate,
+  SUM(totals.transactionRevenue) as Revenue,
+  CASE WHEN SUM(totals.transactions) >0
+    THEN SUM(totals.transactionRevenue)/SUM(totals.transactions) 
+    ELSE 0
+    END as ave_order_value,
+  geoNetwork.country as country,
+  geoNetwork.region as region,
+  
+  FROM `bigquery-public-data.google_analytics_sample.ga_sessions_20170801` 
+  WHERE geoNetwork.country = "United States"
+  GROUP BY date, geoNetwork.country, geoNetwork.region
+  
+  Order BY region asc
+
+),
+
+sessionsregion AS
+(
+SELECT
+sessions.region AS region,
+state_population.total_population AS total_population,
+sessions.visits AS visits,
+sessions.transactions AS transactions,
+sessions.conversion_rate AS conversion_rate,
+sessions.Revenue Revenue,
+sessions.ave_order_value AS ave_order_value,
+sessions.country as country,
+sessions.transactions/state_population.total_population as penetration_per_state,
+
+
+
+
+FROM sessions
+LEFT JOIN state_population
+ON sessions.region = state_population.state_name
+GROUP BY region, 
+total_population, 
+visits, 
+transactions, 
+sessions.conversion_rate,
+sessions.Revenue,
+sessions.ave_order_value,
+sessions.country
+ORDER BY region ASC
+)
+
+Select
+region,
+total_population,
+visits,
+transactions,
+conversion_rate,
+Revenue,
+ave_order_value,
+country,
+penetration_per_state,
+rank() over(
+ORDER BY penetration_per_state DESC) pps_rank
+FROM sessionsregion
+Where total_population is not null and transactions is not null
+GROUP BY region, 
+total_population, 
+visits, 
+transactions, 
+conversion_rate,
+Revenue,
+ave_order_value,
+country,
+penetration_per_state
+ORDER BY region ASC
